@@ -1,0 +1,299 @@
+# Aybee Platform API Reference
+
+## Base URL
+```
+https://platform.aybee.ai/version-test/api/1.1
+```
+
+## Authentication
+All requests require a Bearer token in the `Authorization` header:
+```
+Authorization: Bearer 499ce90a809acb4efe0a7a9eed19a82e
+```
+
+## Pagination
+All list endpoints support cursor-based pagination:
+- `limit` (int): Number of records per page (max 100)
+- `cursor` (int): Offset for pagination (start at 0, increment by limit)
+
+Response wrapper:
+```json
+{
+  "response": {
+    "cursor": 0,
+    "results": [...],
+    "count": 100,
+    "remaining": 319
+  }
+}
+```
+- `count`: number of results returned in this page
+- `remaining`: number of results still available after this page
+
+---
+
+## 1. Company
+
+**Endpoint:** `GET /obj/company`
+
+Represents a customer organization on the platform.
+
+### Key Fields
+
+| Field | Type | Description |
+|---|---|---|
+| `_id` | string | Unique identifier |
+| `name` | string | Company display name |
+| `nameLowercase` | string | Lowercased name (for search/sorting) |
+| `status` | string | Account status. Values: `"Registered"`, `"As you go"`, `"Package Customer"`, `"One-Off"` |
+| `numberCredits` | number | **Current credit balance** (can be negative if overcharged) |
+| `allowOvercharge?` | boolean | Whether the company can go into negative credits |
+| `OS Pricing Type` | string | Pricing model, observed value: `"SLG"` |
+| `OS Credit Package` | string | Current package tier. Values: `"As you go"`, `"Business"`, `"Explorer"`, `"Custom/Enterprise"` |
+| `OS Schedule Renew` | string | Renewal frequency. Values: `"Anually"`, `"Quarterly"`, `"No renewal"` |
+| `currency` | string | Optional. e.g. `"Euro"` |
+| `registeredDate` | ISO 8601 | When the company registered |
+| `Created Date` | ISO 8601 | Record creation timestamp |
+| `Modified Date` | ISO 8601 | Last modification timestamp |
+| `Created By` | string | User ID who created the record |
+
+### Billing Fields (optional)
+| Field | Type | Description |
+|---|---|---|
+| `billingAddress` | string | Street address |
+| `billingCity` | string | City |
+| `billingPostalCode` | string | Postal/ZIP code |
+| `billingCountry` | string | Country name |
+
+### Relationship Fields (lists of IDs)
+| Field | Type | Description |
+|---|---|---|
+| `Company_user` | string[] | User IDs associated with this company |
+| `Customer_Projects` | string[] | All project IDs linked to this company |
+| `active/finished Projects` | string[] | Projects that are active or completed |
+| `Credit Packages` | string[] | Credit package IDs owned by this company |
+| `Credit Transactions` | string[] | Credit transaction IDs for this company |
+| `Transactions` | string[] | Transaction IDs for this company |
+| `Payments` | string[] | Payment record IDs |
+
+### Other Fields
+| Field | Type | Description |
+|---|---|---|
+| `Stripe Customer ID` | string | Stripe integration ID |
+| `hubspotCompanyID` | string | HubSpot CRM integration ID |
+| `Company Search Satellite` | string | ID referencing the `companysearchsatellite` object (used for cross-entity linking) |
+| `Brand Design` | string | Brand design asset ID |
+| `Invitation` | string | Invitation record ID |
+| `[deprecated] Active Credit Package` | string | Legacy field — active credit package ID |
+| `Inactive Bonus Claimed` | boolean | Whether inactive bonus was claimed |
+
+---
+
+## 2. Transaction
+
+**Endpoint:** `GET /obj/transaction`
+
+Represents a credit-related event tied to a project or credit package allocation. Each transaction links to one or more Credit Transactions (the actual credit movements).
+
+### Key Fields
+
+| Field | Type | Description |
+|---|---|---|
+| `_id` | string | Unique identifier |
+| `Company` | string | **Company ID** this transaction belongs to |
+| `Project` | string | Project ID this transaction is associated with (optional — absent for package allocations) |
+| `Credit Package` | string | Credit package ID (present for package-related transactions) |
+| `Credit Transactions` | string[] | List of Credit Transaction IDs created by this transaction |
+| `OS Transaction Type` | string | Type of transaction. Values: `"Use"`, `"Buy"`, `"Credit Allocation"` |
+| `OS Project Status` | string | Project status at time of transaction. Values: `"In Review"`, `"Running"`, `"Paused"`, `"Finished"`, `"Cancelled"` |
+| `information` | string | Human-readable description of the transaction |
+| `Invoices` | string[] | Associated invoice IDs (optional) |
+| `Created Date` | ISO 8601 | Record creation timestamp |
+| `Modified Date` | ISO 8601 | Last modification timestamp |
+| `Created By` | string | User or system ID who created the record |
+
+### Notes
+- `OS Transaction Type: "Use"` → typically has a `Project` field; represents credits consumed by running a project.
+- `OS Transaction Type: "Buy"` or `"Credit Allocation"` → typically has a `Credit Package` field; represents credits being added.
+- The `information` field contains descriptive strings like `"Aybee GmbH - Asset Testing 1/10/26"` or `"Business package. 1000 credits added."`.
+
+---
+
+## 3. Credit Transaction
+
+**Endpoint:** `GET /obj/credittransaction`
+
+Represents an individual credit movement (buy or use). This is the atomic unit of credit tracking.
+
+### Key Fields
+
+| Field | Type | Description |
+|---|---|---|
+| `_id` | string | Unique identifier |
+| `creditAmount` | number | Number of credits in this transaction (always positive) |
+| `CreditTransaction Type` | string | Direction. Values: `"Buy"` (credits added), `"Use"` (credits consumed) |
+| `Info` | string | Human-readable description |
+| `Company` | string | **Company ID** (present on newer records; absent on older pre-Jan 2025 records) |
+| `User` | string | User ID who performed the action (optional) |
+| `Created Date` | ISO 8601 | Record creation timestamp |
+| `Modified Date` | ISO 8601 | Last modification timestamp |
+| `Created By` | string | User ID who created the record (optional) |
+
+### Notes
+- **Older records (pre-Jan 2025) do NOT have the `Company` field.** To associate them with a company, traverse through the parent `Transaction` record or the `Credit Transactions` array on the `Company` object.
+- `"Buy"` info pattern: `"{User Name} bought {amount} credits for {cost} euros on behalf of {Company Name}"`.
+- `"Use"` info contains the project/task description, e.g. `"Gloryfeel - Packaging Test"`.
+- `creditAmount` is always positive. Use `CreditTransaction Type` to determine add vs deduct.
+
+---
+
+## 4. Credit Package
+
+**Endpoint:** `GET /obj/creditpackage`
+
+Represents a credit package/subscription assigned to a company.
+
+### Key Fields
+
+| Field | Type | Description |
+|---|---|---|
+| `_id` | string | Unique identifier |
+| `OS Credit Package` | string | Package tier. Values: `"As you go"`, `"Business"`, `"Explorer"`, `"Team"`, `"Custom/Enterprise"` |
+| `OS Credit Package Status` | string | Status. Values: `"Active"`, `"Done"` |
+| `creditPrice` | number | Price per credit (in the package's currency) |
+| `OS Currency` | string | Currency. Values: `"Euro"`, `"USD"` |
+| `initialCredits` | number | Credits included at package creation (only on paid/tiered packages, not `"As you go"`) |
+| `remainingCredits` | number | **Credits remaining** in this specific package (can be negative) |
+| `totalCost` | number | Total cost of the package |
+| `startDate` | ISO 8601 | Package start date |
+| `renewalDate` | ISO 8601 | Next renewal date |
+| `OS Schedule Renew` | string | Renewal frequency. Values: `"Anually"`, `"Quarterly"`, `"No renewal"` |
+| `Credit Transactions` | string[] | Credit transaction IDs charged against this package (optional — only on some records) |
+| `Company Search Satellite` | string | Links to company indirectly via shared satellite ID |
+| `companyNameLowercase` | string | Denormalized company name (only on some records) |
+| `Created Date` | ISO 8601 | Record creation timestamp |
+| `Modified Date` | ISO 8601 | Last modification timestamp |
+| `Created By` | string | User ID who created the package |
+
+### Notes
+- **There is no direct `Company` field on credit packages.** To link a package to a company, use:
+  1. The company's `Credit Packages` array (contains package `_id`s) — **most reliable**.
+  2. The shared `Company Search Satellite` ID (both company and package reference the same satellite record).
+- `"As you go"` packages typically have no `initialCredits` and `remainingCredits: 0` — they act as billing containers.
+- Paid packages (`Business`, `Explorer`, `Team`, `Custom/Enterprise`) have `initialCredits` and track `remainingCredits`.
+
+---
+
+## 5. Company Search Satellite
+
+**Endpoint:** `GET /obj/companysearchsatellite`
+
+A lightweight lookup/index object that acts as a **bridge entity** connecting Companies to Credit Packages. Each satellite record is linked to exactly one Company and carries minimal metadata for search purposes.
+
+### Key Fields
+
+| Field | Type | Description |
+|---|---|---|
+| `_id` | string | Unique identifier (referenced by `Company.Company Search Satellite` and `CreditPackage.Company Search Satellite`) |
+| `name` | string | Company/display name (denormalized for search) |
+| `Company` | string | **Company ID** — direct reference to the parent company |
+| `hasProject` | boolean | Whether this company has at least one project |
+| `Created Date` | ISO 8601 | Record creation timestamp |
+| `Modified Date` | ISO 8601 | Last modification timestamp |
+| `Created By` | string | Creator ID |
+
+### Notes
+- This is the **key linking table** for connecting Credit Packages to Companies. The relationship chain is:
+  - `CreditPackage.Company Search Satellite` → `CompanySearchSatellite._id` → `CompanySearchSatellite.Company` → `Company._id`
+- Each company has exactly one satellite record.
+- The `name` field is a denormalized copy of the company name for search indexing.
+
+---
+
+## Data Model Relationships
+
+```
+Company (1) ◄──── Company Search Satellite (1:1)
+    │                        ▲
+    │                        │
+    │              Credit Package references
+    │              satellite via shared ID
+    │
+    ├── Credit Packages[]  ──────► Credit Package (1:many)
+    │                                  │
+    │                                  └── remainingCredits
+    │
+    ├── Transactions[]  ─────────► Transaction (1:many)
+    │                                  │
+    │                                  ├── Company (back-reference)
+    │                                  ├── Project (optional)
+    │                                  └── Credit Transactions[]
+    │
+    ├── Credit Transactions[]  ──► Credit Transaction (1:many)
+    │                                  │
+    │                                  ├── Company (back-ref, may be absent on old records)
+    │                                  ├── creditAmount
+    │                                  └── CreditTransaction Type ("Buy"/"Use")
+    │
+    └── numberCredits (current balance — source of truth)
+```
+
+### Linking Strategy Summary
+
+| From → To | Method |
+|---|---|
+| Company → Credit Packages | `Company.Credit Packages[]` contains package `_id`s |
+| Company → Transactions | `Company.Transactions[]` contains transaction `_id`s |
+| Company → Credit Transactions | `Company.Credit Transactions[]` contains credit tx `_id`s |
+| Company → Satellite | `Company.Company Search Satellite` = satellite `_id` |
+| Transaction → Company | `Transaction.Company` field (direct) |
+| Transaction → Credit Transactions | `Transaction.Credit Transactions[]` |
+| Credit Transaction → Company | `CreditTransaction.Company` field (may be absent pre-Jan 2025) |
+| Credit Package → Company (indirect) | `CreditPackage.Company Search Satellite` → look up `CompanySearchSatellite.Company` |
+| Credit Package → Company (preferred) | Reverse lookup: find Company whose `Credit Packages[]` contains the package `_id` |
+| Satellite → Company | `CompanySearchSatellite.Company` field (direct) |
+
+---
+
+## Credit Balance Logic
+
+- **`Company.numberCredits`** = The company's current overall credit balance. This is the **source of truth** for remaining credits.
+- **`CreditPackage.remainingCredits`** = Credits remaining within a specific package.
+- **`CreditTransaction.creditAmount`** + **`CreditTransaction.CreditTransaction Type`** = Individual credit movements. Sum of `"Buy"` minus sum of `"Use"` should approximate the company balance.
+
+---
+
+## Quick Start: Get Remaining Credits Per Company
+
+The simplest approach uses `numberCredits` directly from Company objects — no aggregation needed:
+
+```javascript
+const API_BASE = "https://platform.aybee.ai/version-test/api/1.1";
+const headers = { Authorization: "Bearer <API_KEY>" };
+
+// Fetch all companies (paginated)
+let all = [], cursor = 0;
+while (true) {
+  const res = await fetch(`${API_BASE}/obj/company?limit=100&cursor=${cursor}`, { headers });
+  const data = await res.json();
+  const results = data.response.results || [];
+  all = all.concat(results);
+  if (results.length < 100 || all.length >= data.response.count + cursor) break;
+  cursor += 100;
+}
+
+// Display credit balances
+all.forEach(c => {
+  console.log(`${c.name}: ${c.numberCredits} credits (status: ${c.status})`);
+});
+```
+
+## Available Data Types (Endpoints)
+
+| Data Type | Endpoint | Record Count (approx) |
+|---|---|---|
+| `company` | `/obj/company` | ~419 |
+| `transaction` | `/obj/transaction` | ~1,417 |
+| `credittransaction` | `/obj/credittransaction` | ~2,282 |
+| `creditpackage` | `/obj/creditpackage` | ~622 |
+| `companysearchsatellite` | `/obj/companysearchsatellite` | ~353 |
